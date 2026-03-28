@@ -161,3 +161,44 @@
   background: #ccc;
   border-color: #ccc;
 }
+
+.stage-action-button {
+  display: inline-block;
+  margin: 12px 0;
+  padding: 10px 20px;
+  background: #4a90e2;
+  border: 1px solid #4a90e2;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.stage-action-button:hover:not(:disabled) {
+  background: #357abd;
+  border-color: #357abd;
+}
+
+.stage-action-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancel-button {
+  padding: 6px 16px;
+  background: transparent;
+  border: 1px solid #e74c3c;
+  border-radius: 6px;
+  color: #e74c3c;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: 12px;
+}
+
+.cancel-button:hover {
+  background: #e74c3c;
+  color: #fff;
+}

@@ -4,6 +4,34 @@
 
 const API_BASE = 'http://localhost:8001';
 
+/**
+ * Shared SSE stream reader. Reads events from a fetch response and calls onEvent for each.
+ */
+async function readSSEStream(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value);
+    const lines = chunk.split('\n');
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6);
+        try {
+          const event = JSON.parse(data);
+          onEvent(event.type, event);
+        } catch (e) {
+          console.error('Failed to parse SSE event:', e);
+        }
+      }
+    }
+  }
+}
+
 export const api = {
   /**
    * List all conversations.
@@ -47,41 +75,16 @@ export const api = {
   },
 
   /**
-   * Send a message in a conversation.
+   * Send a message and receive streaming Stage 1 results.
    */
-  async sendMessage(conversationId, content) {
-    const response = await fetch(
-      `${API_BASE}/api/conversations/${conversationId}/message`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ content }),
-      }
-    );
-    if (!response.ok) {
-      throw new Error('Failed to send message');
-    }
-    return response.json();
-  },
-
-  /**
-   * Send a message and receive streaming updates.
-   * @param {string} conversationId - The conversation ID
-   * @param {string} content - The message content
-   * @param {function} onEvent - Callback function for each event: (eventType, data) => void
-   * @returns {Promise<void>}
-   */
-  async sendMessageStream(conversationId, content, onEvent) {
+  async sendMessageStream(conversationId, content, onEvent, signal = null) {
     const response = await fetch(
       `${API_BASE}/api/conversations/${conversationId}/message/stream`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content }),
+        signal,
       }
     );
 
@@ -89,27 +92,44 @@ export const api = {
       throw new Error('Failed to send message');
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
+    await readSSEStream(response, onEvent);
+  },
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n');
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          try {
-            const event = JSON.parse(data);
-            onEvent(event.type, event);
-          } catch (e) {
-            console.error('Failed to parse SSE event:', e);
-          }
-        }
+  /**
+   * Run Stage 2 (peer review) on a specific assistant message.
+   */
+  async runStage2Stream(conversationId, messageIndex, onEvent, signal = null) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/messages/${messageIndex}/stage2`,
+      {
+        method: 'POST',
+        signal,
       }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to run Stage 2');
     }
+
+    await readSSEStream(response, onEvent);
+  },
+
+  /**
+   * Run Stage 3 (synthesis) on a specific assistant message.
+   */
+  async runStage3Stream(conversationId, messageIndex, onEvent, signal = null) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/messages/${messageIndex}/stage3`,
+      {
+        method: 'POST',
+        signal,
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to run Stage 3');
+    }
+
+    await readSSEStream(response, onEvent);
   },
 };
