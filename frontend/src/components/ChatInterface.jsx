@@ -8,6 +8,9 @@ import './ChatInterface.css';
 export default function ChatInterface({
   conversation,
   onSendMessage,
+  onRunStage2,
+  onRunStage3,
+  onCancel,
   isLoading,
 }) {
   const [input, setInput] = useState('');
@@ -77,15 +80,28 @@ export default function ChatInterface({
                     <div className="stage-loading">
                       <div className="spinner"></div>
                       <span>Running Stage 1: Collecting individual responses...</span>
+                      <button className="cancel-button" onClick={onCancel}>Cancel</button>
                     </div>
                   )}
                   {msg.stage1 && <Stage1 responses={msg.stage1} />}
+
+                  {/* Run Peer Review button */}
+                  {msg.stage1 && !msg.stage2 && !msg.loading?.stage2 && (
+                    <button
+                      className="stage-action-button"
+                      onClick={() => onRunStage2(index)}
+                      disabled={isLoading}
+                    >
+                      Run Peer Review
+                    </button>
+                  )}
 
                   {/* Stage 2 */}
                   {msg.loading?.stage2 && (
                     <div className="stage-loading">
                       <div className="spinner"></div>
                       <span>Running Stage 2: Peer rankings...</span>
+                      <button className="cancel-button" onClick={onCancel}>Cancel</button>
                     </div>
                   )}
                   {msg.stage2 && (
@@ -96,11 +112,23 @@ export default function ChatInterface({
                     />
                   )}
 
+                  {/* Synthesize button */}
+                  {msg.stage2 && !msg.stage3 && !msg.loading?.stage3 && (
+                    <button
+                      className="stage-action-button"
+                      onClick={() => onRunStage3(index)}
+                      disabled={isLoading}
+                    >
+                      Synthesize Final Answer
+                    </button>
+                  )}
+
                   {/* Stage 3 */}
                   {msg.loading?.stage3 && (
                     <div className="stage-loading">
                       <div className="spinner"></div>
                       <span>Running Stage 3: Final synthesis...</span>
+                      <button className="cancel-button" onClick={onCancel}>Cancel</button>
                     </div>
                   )}
                   {msg.stage3 && <Stage3 finalResponse={msg.stage3} />}
@@ -110,36 +138,27 @@ export default function ChatInterface({
           ))
         )}
 
-        {isLoading && (
-          <div className="loading-indicator">
-            <div className="spinner"></div>
-            <span>Consulting the council...</span>
-          </div>
-        )}
-
         <div ref={messagesEndRef} />
       </div>
 
-      {conversation.messages.length === 0 && (
-        <form className="input-form" onSubmit={handleSubmit}>
-          <textarea
-            className="message-input"
-            placeholder="Ask your question... (Shift+Enter for new line, Enter to send)"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            rows={3}
-          />
-          <button
-            type="submit"
-            className="send-button"
-            disabled={!input.trim() || isLoading}
-          >
-            Send
-          </button>
-        </form>
-      )}
+      <form className="input-form" onSubmit={handleSubmit}>
+        <textarea
+          className="message-input"
+          placeholder="Ask your question... (Shift+Enter for new line, Enter to send)"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={isLoading}
+          rows={3}
+        />
+        <button
+          type="submit"
+          className="send-button"
+          disabled={!input.trim() || isLoading}
+        >
+          Send
+        </button>
+      </form>
     </div>
   );
 }

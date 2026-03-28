@@ -9,6 +9,7 @@ function App() {
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [currentConversation, setCurrentConversation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [abortController, setAbortController] = useState(null);
 
   // Load conversations on mount
   useEffect(() => {
@@ -57,10 +58,25 @@ function App() {
     setCurrentConversationId(id);
   };
 
+  const handleCancel = () => {
+    if (abortController) {
+      abortController.abort();
+      setAbortController(null);
+      setIsLoading(false);
+      // Reload conversation from backend to get persisted state
+      if (currentConversationId) {
+        loadConversation(currentConversationId);
+      }
+    }
+  };
+
   const handleSendMessage = async (content) => {
     if (!currentConversationId) return;
 
+    const controller = new AbortController();
+    setAbortController(controller);
     setIsLoading(true);
+
     try {
       // Optimistically add user message to UI
       const userMessage = { role: 'user', content };
@@ -69,7 +85,7 @@ function App() {
         messages: [...prev.messages, userMessage],
       }));
 
-      // Create a partial assistant message that will be updated progressively
+      // Create a partial assistant message (Stage 1 only)
       const assistantMessage = {
         role: 'assistant',
         stage1: null,
@@ -83,20 +99,19 @@ function App() {
         },
       };
 
-      // Add the partial assistant message
       setCurrentConversation((prev) => ({
         ...prev,
         messages: [...prev.messages, assistantMessage],
       }));
 
-      // Send message with streaming
       await api.sendMessageStream(currentConversationId, content, (eventType, event) => {
         switch (eventType) {
           case 'stage1_start':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.stage1 = true;
+              const lastMsg = { ...messages[messages.length - 1] };
+              lastMsg.loading = { ...lastMsg.loading, stage1: true };
+              messages[messages.length - 1] = lastMsg;
               return { ...prev, messages };
             });
             break;
@@ -104,80 +119,157 @@ function App() {
           case 'stage1_complete':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
+              const lastMsg = { ...messages[messages.length - 1] };
               lastMsg.stage1 = event.data;
-              lastMsg.loading.stage1 = false;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'stage2_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.stage2 = true;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'stage2_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.stage2 = event.data;
-              lastMsg.metadata = event.metadata;
-              lastMsg.loading.stage2 = false;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'stage3_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.stage3 = true;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'stage3_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.stage3 = event.data;
-              lastMsg.loading.stage3 = false;
+              lastMsg.loading = { ...lastMsg.loading, stage1: false };
+              messages[messages.length - 1] = lastMsg;
               return { ...prev, messages };
             });
             break;
 
           case 'title_complete':
-            // Reload conversations to get updated title
             loadConversations();
             break;
 
           case 'complete':
-            // Stream complete, reload conversations list
             loadConversations();
             setIsLoading(false);
+            setAbortController(null);
             break;
 
           case 'error':
             console.error('Stream error:', event.message);
             setIsLoading(false);
+            setAbortController(null);
             break;
 
           default:
             console.log('Unknown event type:', eventType);
         }
-      });
+      }, controller.signal);
     } catch (error) {
+      if (error.name === 'AbortError') {
+        // Cancelled by user, state already handled in handleCancel
+        return;
+      }
       console.error('Failed to send message:', error);
-      // Remove optimistic messages on error
       setCurrentConversation((prev) => ({
         ...prev,
         messages: prev.messages.slice(0, -2),
       }));
       setIsLoading(false);
+      setAbortController(null);
+    }
+  };
+
+  const updateMessageAtIndex = (messageIndex, updater) => {
+    setCurrentConversation((prev) => {
+      const messages = [...prev.messages];
+      messages[messageIndex] = updater({ ...messages[messageIndex] });
+      return { ...prev, messages };
+    });
+  };
+
+  const handleRunStage2 = async (messageIndex) => {
+    if (!currentConversationId) return;
+
+    const controller = new AbortController();
+    setAbortController(controller);
+    setIsLoading(true);
+
+    updateMessageAtIndex(messageIndex, (msg) => ({
+      ...msg,
+      loading: { ...msg.loading, stage2: true },
+    }));
+
+    try {
+      await api.runStage2Stream(currentConversationId, messageIndex, (eventType, event) => {
+        switch (eventType) {
+          case 'stage2_complete':
+            updateMessageAtIndex(messageIndex, (msg) => ({
+              ...msg,
+              stage2: event.data,
+              metadata: event.metadata,
+              loading: { ...msg.loading, stage2: false },
+            }));
+            break;
+
+          case 'complete':
+            setIsLoading(false);
+            setAbortController(null);
+            break;
+
+          case 'error':
+            console.error('Stage 2 error:', event.message);
+            updateMessageAtIndex(messageIndex, (msg) => ({
+              ...msg,
+              loading: { ...msg.loading, stage2: false },
+            }));
+            setIsLoading(false);
+            setAbortController(null);
+            break;
+        }
+      }, controller.signal);
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      console.error('Failed to run Stage 2:', error);
+      updateMessageAtIndex(messageIndex, (msg) => ({
+        ...msg,
+        loading: { ...msg.loading, stage2: false },
+      }));
+      setIsLoading(false);
+      setAbortController(null);
+    }
+  };
+
+  const handleRunStage3 = async (messageIndex) => {
+    if (!currentConversationId) return;
+
+    const controller = new AbortController();
+    setAbortController(controller);
+    setIsLoading(true);
+
+    updateMessageAtIndex(messageIndex, (msg) => ({
+      ...msg,
+      loading: { ...msg.loading, stage3: true },
+    }));
+
+    try {
+      await api.runStage3Stream(currentConversationId, messageIndex, (eventType, event) => {
+        switch (eventType) {
+          case 'stage3_complete':
+            updateMessageAtIndex(messageIndex, (msg) => ({
+              ...msg,
+              stage3: event.data,
+              loading: { ...msg.loading, stage3: false },
+            }));
+            break;
+
+          case 'complete':
+            setIsLoading(false);
+            setAbortController(null);
+            break;
+
+          case 'error':
+            console.error('Stage 3 error:', event.message);
+            updateMessageAtIndex(messageIndex, (msg) => ({
+              ...msg,
+              loading: { ...msg.loading, stage3: false },
+            }));
+            setIsLoading(false);
+            setAbortController(null);
+            break;
+        }
+      }, controller.signal);
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      console.error('Failed to run Stage 3:', error);
+      updateMessageAtIndex(messageIndex, (msg) => ({
+        ...msg,
+        loading: { ...msg.loading, stage3: false },
+      }));
+      setIsLoading(false);
+      setAbortController(null);
     }
   };
 
@@ -192,6 +284,9 @@ function App() {
       <ChatInterface
         conversation={currentConversation}
         onSendMessage={handleSendMessage}
+        onRunStage2={handleRunStage2}
+        onRunStage3={handleRunStage3}
+        onCancel={handleCancel}
         isLoading={isLoading}
       />
     </div>

@@ -1,22 +1,20 @@
 """3-stage LLM Council orchestration."""
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 from .openrouter import query_models_parallel, query_model
 from .config import COUNCIL_MODELS, CHAIRMAN_MODEL
 
 
-async def stage1_collect_responses(user_query: str) -> List[Dict[str, Any]]:
+async def stage1_collect_responses(messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
     """
     Stage 1: Collect individual responses from all council models.
 
     Args:
-        user_query: The user's question
+        messages: Conversation history as OpenAI-format message list
 
     Returns:
         List of dicts with 'model' and 'response' keys
     """
-    messages = [{"role": "user", "content": user_query}]
-
     # Query all models in parallel
     responses = await query_models_parallel(COUNCIL_MODELS, messages)
 
@@ -115,7 +113,8 @@ Now provide your evaluation and ranking:"""
 async def stage3_synthesize_final(
     user_query: str,
     stage1_results: List[Dict[str, Any]],
-    stage2_results: List[Dict[str, Any]]
+    stage2_results: List[Dict[str, Any]],
+    conversation_history: Optional[List[Dict[str, str]]] = None
 ) -> Dict[str, Any]:
     """
     Stage 3: Chairman synthesizes final response.
@@ -124,6 +123,7 @@ async def stage3_synthesize_final(
         user_query: The original user query
         stage1_results: Individual model responses from Stage 1
         stage2_results: Rankings from Stage 2
+        conversation_history: Optional prior conversation context
 
     Returns:
         Dict with 'model' and 'response' keys
@@ -139,9 +139,23 @@ async def stage3_synthesize_final(
         for result in stage2_results
     ])
 
+    # Build conversation history section if available
+    history_section = ""
+    if conversation_history:
+        history_lines = []
+        for msg in conversation_history:
+            role = "User" if msg["role"] == "user" else "Council"
+            history_lines.append(f"{role}: {msg['content']}")
+        history_section = f"""Conversation History (prior exchanges between the user and the council):
+{chr(10).join(history_lines)}
+
+---
+
+"""
+
     chairman_prompt = f"""You are the Chairman of an LLM Council. Multiple AI models have provided responses to a user's question, and then ranked each other's responses.
 
-Original Question: {user_query}
+{history_section}Current Question: {user_query}
 
 STAGE 1 - Individual Responses:
 {stage1_text}
@@ -149,10 +163,11 @@ STAGE 1 - Individual Responses:
 STAGE 2 - Peer Rankings:
 {stage2_text}
 
-Your task as Chairman is to synthesize all of this information into a single, comprehensive, accurate answer to the user's original question. Consider:
+Your task as Chairman is to synthesize all of this information into a single, comprehensive, accurate answer to the user's question. Consider:
 - The individual responses and their insights
 - The peer rankings and what they reveal about response quality
 - Any patterns of agreement or disagreement
+{("- The full conversation history and user's evolving needs" if conversation_history else "")}
 
 Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
 

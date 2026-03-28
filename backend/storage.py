@@ -130,17 +130,20 @@ def add_user_message(conversation_id: str, content: str):
 def add_assistant_message(
     conversation_id: str,
     stage1: List[Dict[str, Any]],
-    stage2: List[Dict[str, Any]],
-    stage3: Dict[str, Any]
+    stage2: Optional[List[Dict[str, Any]]] = None,
+    stage3: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None
 ):
     """
-    Add an assistant message with all 3 stages to a conversation.
+    Add an assistant message to a conversation.
+    Stage 2, stage 3, and metadata are optional to support on-demand execution.
 
     Args:
         conversation_id: Conversation identifier
         stage1: List of individual model responses
-        stage2: List of model rankings
-        stage3: Final synthesized response
+        stage2: List of model rankings (optional)
+        stage3: Final synthesized response (optional)
+        metadata: Label mappings and aggregate rankings (optional)
     """
     conversation = get_conversation(conversation_id)
     if conversation is None:
@@ -150,8 +153,45 @@ def add_assistant_message(
         "role": "assistant",
         "stage1": stage1,
         "stage2": stage2,
-        "stage3": stage3
+        "stage3": stage3,
+        "metadata": metadata
     })
+
+    save_conversation(conversation)
+
+
+def update_assistant_stage(
+    conversation_id: str,
+    message_index: int,
+    stage_name: str,
+    stage_data: Any,
+    metadata: Optional[Dict[str, Any]] = None
+):
+    """
+    Update a specific stage on an existing assistant message.
+
+    Args:
+        conversation_id: Conversation identifier
+        message_index: Index of the assistant message in the messages array
+        stage_name: Which stage to update ('stage2' or 'stage3')
+        stage_data: The stage results to store
+        metadata: Optional metadata to update (label_to_model, aggregate_rankings)
+    """
+    conversation = get_conversation(conversation_id)
+    if conversation is None:
+        raise ValueError(f"Conversation {conversation_id} not found")
+
+    messages = conversation["messages"]
+    if message_index < 0 or message_index >= len(messages):
+        raise ValueError(f"Message index {message_index} out of range")
+
+    msg = messages[message_index]
+    if msg["role"] != "assistant":
+        raise ValueError(f"Message at index {message_index} is not an assistant message")
+
+    msg[stage_name] = stage_data
+    if metadata is not None:
+        msg["metadata"] = metadata
 
     save_conversation(conversation)
 
